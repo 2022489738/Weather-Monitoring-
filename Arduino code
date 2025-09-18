@@ -1,0 +1,104 @@
+//This the Arduino Code 
+
+#include <WiFi.h>
+#include <WebSocketsServer.h>
+#include <WebServer.h>
+
+const char* ssid = "AshutoshSingh";
+const char* password = "ashutosh";
+
+WebServer server(80);
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+// Voltage & Current Sensor Pins
+#define VOLTAGE_SENSOR 34  // ZMPT101B connected to GPIO34 (ADC1)
+#define CURRENT_SENSOR 35  // ACS712 connected to GPIO35 (ADC1)
+
+// Relay Pins
+#define RELAY_1 26  // GPIO26
+#define RELAY_2 27  // GPIO27
+
+// Function to read voltage
+float readVoltage() {
+    int rawValue = analogRead(VOLTAGE_SENSOR);
+    float voltage = (rawValue / 4095.0) * 230.0;  // Adjust scaling based on ZMPT101B calibration
+    return voltage;
+}
+
+// Function to read current
+float readCurrent() {
+    int rawValue = analogRead(CURRENT_SENSOR);
+    float current = (rawValue / 4095.0) * 20.0;  // Adjust scaling based on ACS712 calibration
+    return current;
+}
+
+// Function to send sensor data to WebSocket clients
+void sendSensorData() {
+    float voltage = readVoltage();
+    float current = readCurrent();
+    float power = voltage * current;
+
+    String data = "{\"voltage\":" + String(voltage) + 
+                  ", \"current\":" + String(current) + 
+                  ", \"power\":" + String(power) + "}";
+
+    webSocket.broadcastTXT(data);  // Send data to all connected clients
+}
+
+// Handle HTTP request
+void handleRoot() {
+    server.send(200, "text/html", "<h1>ESP32 WebSocket Server Running...</h1>");
+}
+
+// Handle WebSocket messages
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
+    if (type == WStype_TEXT) {
+        String command = String((char*)payload);
+
+        if (command == "relay1_on") {
+            digitalWrite(RELAY_1, LOW);  // Activate relay (LOW = ON for active LOW relays)
+        } else if (command == "relay1_off") {
+            digitalWrite(RELAY_1, HIGH); // Deactivate relay
+        } else if (command == "relay2_on") {
+            digitalWrite(RELAY_2, LOW);
+        } else if (command == "relay2_off") {
+            digitalWrite(RELAY_2, HIGH);
+        }
+
+        Serial.println("Received: " + command);
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nConnected to WiFi");
+
+    // Initialize server and WebSocket
+    server.on("/", handleRoot);
+    server.begin();
+    webSocket.begin();
+    webSocket.onEvent(webSocketEvent);
+
+    // Set relay pins as outputs
+    pinMode(RELAY_1, OUTPUT);
+    pinMode(RELAY_2, OUTPUT);
+
+    // Ensure relays start OFF
+    digitalWrite(RELAY_1, HIGH);
+    digitalWrite(RELAY_2, HIGH);
+
+    Serial.println("WebSocket server started");
+}
+
+void loop() {
+    server.handleClient();
+    webSocket.loop();
+    sendSensorData();
+    delay(2000);  // Send data every 2 seconds
+}
